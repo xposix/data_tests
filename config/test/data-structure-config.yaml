@@ -1,0 +1,7 @@
+template_path: data-structure.yaml
+stack_tags:
+  creator: {{ stack_group_config.creator }}
+
+
+parameters:
+  BKLanding: lastfm-rsr-test

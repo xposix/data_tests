@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Ruben Data tests
+
+Parameters: 
+  BKLanding:
+    Description: Name of the Landing bucket
+    Type: String
+
+Resources: 
+  RLGlueCrawler:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: / 
+      AssumeRolePolicyDocument: 
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - glue.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - 
+         PolicyName: AWSGlueServiceRole-LastFM
+         PolicyDocument:
+           Version: "2012-10-17"
+           Statement:
+              - 
+                Effect: "Allow"
+                Action: 
+                - "s3:GetObject"
+                - "s3:PutObject"
+                Resource: "arn:aws:s3:::lastfm-rsr-test/userid-timestamp-artid-artname-traid-traname.tsv.gz*"
+
+  RLAthena:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: / 
+      AssumeRolePolicyDocument: 
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - athena.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+        - 
+         PolicyName: AWSGlueServiceRole-LastFM-Athena
+         PolicyDocument:
+           Version: "2012-10-17"
+           Statement:
+              - 
+                Effect: "Allow"
+                Action: 
+                - "s3:GetObject"
+                Resource: "arn:aws:s3:::lastfm-rsr-test/userid-timestamp-artid-artname-traid-traname.tsv.gz*"
+
+  GDLanding:
+    Type: AWS::Glue::Database
+    Properties:
+        DatabaseInput: 
+          Name: landing
+        CatalogId: !Ref AWS::AccountId
+
+  PlaybacksDatabaseCreationQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Description: !Sub '[${BKLanding}] Create Playbacks database'
+      QueryString: !Sub >
+        CREATE EXTERNAL TABLE IF NOT EXISTS landing.`playbacks`(
+          `userid` string,
+          `timestamp` string,
+          `artid` string,
+          `artname` string,
+          `traid` string,
+          `traname` string
+        )
+        ROW FORMAT DELIMITED 
+          FIELDS TERMINATED BY '\t' 
+        STORED AS INPUTFORMAT 
+          'org.apache.hadoop.mapred.TextInputFormat' 
+        OUTPUTFORMAT 
+          'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+        LOCATION
+          's3://${BKLanding}/playbacks/'
+        TBLPROPERTIES (
+          'delimiter'='\t', 
+          'typeOfData'='file');
+      Database: !Ref GDLanding
+      Name: LandingPlaybacksCreationQuery
+
+  ProfilesDatabaseCreationQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Description: !Sub '[${BKLanding}] Create Profiles database' 
+      QueryString: !Sub >
+        CREATE EXTERNAL TABLE IF NOT EXISTS landing.`profiles`(
+          `userid` string,
+          `gender` string,
+          `country` string,
+          `registered` string
+        )
+        ROW FORMAT DELIMITED 
+          FIELDS TERMINATED BY '\t' 
+        STORED AS INPUTFORMAT 
+          'org.apache.hadoop.mapred.TextInputFormat' 
+        OUTPUTFORMAT 
+          'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+        LOCATION
+          's3://${BKLanding}/profiles/'
+        TBLPROPERTIES (
+          'delimiter'='\t', 
+          'skip.header.line.count'='1',
+          'typeOfData'='file');
+      Database: !Ref GDLanding
+      Name: LandingProfilesCreationQuery
+
+Outputs:
+  LogicalID:
+    Description: Glue database name
+    Value: !Ref GDLanding

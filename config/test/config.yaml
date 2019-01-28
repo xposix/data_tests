@@ -1,0 +1,8 @@
+---
+# Name that uniquely identifies your project
+project_code: data-tests
+region: eu-west-1
+
+###### COMMON PARAMS ######
+# Put your email address here
+creator: ruben.sancho@cloudreach.com
