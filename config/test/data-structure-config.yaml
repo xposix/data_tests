@@ -2,6 +2,18 @@ template_path: data-structure.yaml
 stack_tags:
   creator: {{ stack_group_config.creator }}
 
+hooks:
+  before_create:
+    - !cmd "aws s3 mb s3://{{ stack_group_config.BKScripts }} --region eu-west-1 || true"
+    - !cmd "aws s3 rm s3://{{ stack_group_config.BKScripts }} --recursive || true "
+    - !cmd "aws s3 cp ./glue_scripts/* s3://{{ stack_group_config.BKScripts }}"
+
+  before_update:
+    - !cmd "aws s3 mb s3://{{ stack_group_config.BKScripts }} --region eu-west-1 || true"
+    - !cmd "aws s3 rm s3://{{ stack_group_config.BKScripts }} --recursive || true"
+    - !cmd "aws s3 cp ./glue_scripts/* s3://{{ stack_group_config.BKScripts }}"
 
 parameters:
   BKLanding: lastfm-rsr-test
+  BKRefined: lastfm-rsr-test-refined
+  BKGlueScripts: {{ stack_group_config.BKScripts }}

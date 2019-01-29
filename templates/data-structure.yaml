@@ -3,11 +3,17 @@ Description: Ruben Data tests
 
 Parameters: 
   BKLanding:
-    Description: Name of the Landing bucket
+    Description: Name of the data containing all the raw data
+    Type: String
+  BKRefined:
+    Description: Name of the bucket containing all the refined data
+    Type: String
+  BKGlueScripts:
+    Description: Name of the bucket containing the transformation scripts for Glue
     Type: String
 
 Resources: 
-  RLGlueCrawler:
+  RLGlueETL:
     Type: AWS::IAM::Role
     Properties:
       Path: / 
@@ -19,6 +25,8 @@ Resources:
                 - glue.amazonaws.com
             Action:
               - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
       Policies:
         - 
          PolicyName: AWSGlueServiceRole-LastFM
@@ -30,7 +38,9 @@ Resources:
                 Action: 
                 - "s3:GetObject"
                 - "s3:PutObject"
-                Resource: "arn:aws:s3:::lastfm-rsr-test/userid-timestamp-artid-artname-traid-traname.tsv.gz*"
+                Resource: 
+                - !Sub "arn:aws:s3:::${BKLanding}/*"
+                - !Sub "arn:aws:s3:::${BKRefined}/*"
 
   RLAthena:
     Type: AWS::IAM::Role
@@ -54,7 +64,9 @@ Resources:
                 Effect: "Allow"
                 Action: 
                 - "s3:GetObject"
-                Resource: "arn:aws:s3:::lastfm-rsr-test/userid-timestamp-artid-artname-traid-traname.tsv.gz*"
+                Resource:
+                - !Sub "arn:aws:s3:::${BKLanding}/*"
+                - !Sub "arn:aws:s3:::${BKRefined}/*"
 
   GDLanding:
     Type: AWS::Glue::Database
@@ -66,7 +78,7 @@ Resources:
   PlaybacksDatabaseCreationQuery:
     Type: AWS::Athena::NamedQuery
     Properties:
-      Description: !Sub '[${BKLanding}] Create Playbacks database'
+      Description: !Sub '[${BKLanding}] Create Playbacks table'
       QueryString: !Sub >
         CREATE EXTERNAL TABLE IF NOT EXISTS landing.`playbacks`(
           `userid` string,
@@ -93,7 +105,7 @@ Resources:
   ProfilesDatabaseCreationQuery:
     Type: AWS::Athena::NamedQuery
     Properties:
-      Description: !Sub '[${BKLanding}] Create Profiles database' 
+      Description: !Sub '[${BKLanding}] Create Profiles table' 
       QueryString: !Sub >
         CREATE EXTERNAL TABLE IF NOT EXISTS landing.`profiles`(
           `userid` string,
@@ -115,6 +127,78 @@ Resources:
           'typeOfData'='file');
       Database: !Ref GDLanding
       Name: LandingProfilesCreationQuery
+
+  SmallPlaybacksDatabaseCreationQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Description: !Sub '[${BKLanding}] Create Playbacks small table'
+      QueryString: !Sub >
+        CREATE EXTERNAL TABLE IF NOT EXISTS landing.`playbacks_small`(
+          `userid` string,
+          `timestamp` string,
+          `artid` string,
+          `artname` string,
+          `traid` string,
+          `traname` string
+        )
+        ROW FORMAT DELIMITED 
+          FIELDS TERMINATED BY '\t' 
+        STORED AS INPUTFORMAT 
+          'org.apache.hadoop.mapred.TextInputFormat' 
+        OUTPUTFORMAT 
+          'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+        LOCATION
+          's3://${BKLanding}/playbacks_small/'
+        TBLPROPERTIES (
+          'delimiter'='\t', 
+          'typeOfData'='file');
+      Database: !Ref GDLanding
+      Name: SmallPlaybacksDatabaseCreationQuery
+
+  GDRefined:
+    Type: AWS::Glue::Database
+    Properties:
+        DatabaseInput: 
+          Name: refined
+        CatalogId: !Ref AWS::AccountId
+
+  ResultsDatabaseCreationQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Description: !Sub '[${BKRefined}] Create Results table' 
+      QueryString: !Sub >
+        CREATE EXTERNAL TABLE IF NOT EXISTS refined.`results`(
+          `userid` string,
+          `timestamp` string,
+          `artname` string,
+          `traname` string
+        )
+        ROW FORMAT DELIMITED 
+          FIELDS TERMINATED BY '\t' 
+        STORED AS INPUTFORMAT 
+          'org.apache.hadoop.mapred.TextInputFormat' 
+        OUTPUTFORMAT 
+          'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+        LOCATION
+          's3://${BKRefined}/results/'
+        TBLPROPERTIES (
+          'delimiter'='\t', 
+          'skip.header.line.count'='1',
+          'typeOfData'='file');
+      Database: !Ref GDLanding
+      Name: ResultsDatabaseCreationQuery
+  
+  FirstJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Command:
+        Name: FirstTestJob
+        ScriptLocation: "s3://aws-glue-scripts-dstests/"
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      MaxRetries: 0
+      Name: Test-cfn
+      Role: !Ref RLGlueETL
 
 Outputs:
   LogicalID:
