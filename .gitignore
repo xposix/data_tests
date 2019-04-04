@@ -1,1 +1,3 @@
 .vscode/
+userid*.tsv
+*/.DS_Store
