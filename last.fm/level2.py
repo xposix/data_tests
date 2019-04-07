@@ -46,7 +46,12 @@ with open('output-level2.tsv', 'w') as f:
 #         print(result)
 #         f.write("{0}{1}\n".format(result[0],result[1]))
 
+## TODO: pyspark.sql.functions.sumDistinct(col)
+# Aggregate function: returns the sum of distinct values in the expression.
 
+# New in version 1.3.
+
+## 
 
 
 
