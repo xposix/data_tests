@@ -17,14 +17,20 @@
 from pyspark import SparkConf, SparkContext
 from pyspark.sql import SparkSession
 from pyspark.sql import Row
-from pyspark.sql.types import StringType, StructType
+from pyspark.sql import DataFrameReader
+from pyspark.sql.types import StructField, TimestampType, StringType, StructType
 from pyspark.sql.functions import udf, lit
 import pprint
 import logging
-
+import sys 
 import collections
 import datetime
 import time
+
+# Displaying UTF-8 by default
+import sys
+import codecs
+sys.stdout = codecs.getwriter('utf8')(sys.stdout)
 
 # Create a SparkSession
 spark = SparkSession.builder.appName("Level3").getOrCreate()
@@ -35,22 +41,33 @@ def getTime(seconds):
 
     return ("%dd %02dh %02dm %02ds" % (d.day-1, d.hour, d.minute, d.second))
 
-def mapper(line):
-    fields = line.split('\t')
-    #timestamp = unix_timestamp(fields[1],'%Y-%m-%dT%H:%M:%SZ')
-    timestamp = datetime.datetime.strptime(fields[1],'%Y-%m-%dT%H:%M:%SZ')
-    # return Row(userid=str(fields[0]), timestamp=timestamp, artname=str(fields[3]).encode("utf-8"), traname=str(fields[5]).encode("utf-8"))
-    return Row(userid=str(fields[0]), timestamp=timestamp, artname=str(fields[3].encode("utf-8")), traname=str(fields[5].encode("utf-8")))
-    # return Row(userid=str(fields[0]), timestamp=lines.unix_timestamp(fields[1],'%Y-%m-%dT%H:%M:%SZ'))
+# def mapper(line):
+#     fields = line.split('\t')
+#     #timestamp = unix_timestamp(fields[1],'%Y-%m-%dT%H:%M:%SZ')
+#     timestamp = datetime.datetime.strptime(fields[1],'%Y-%m-%dT%H:%M:%SZ')
+#     # return Row(userid=str(fields[0]), timestamp=timestamp, artname=str(fields[3]).encode("utf-8"), traname=str(fields[5]).encode("utf-8"))
+#     return Row(userid=str(fields[0]), timestamp=timestamp, artname=str(fields[3].encode("utf-8")), traname=str(fields[5].encode("utf-8")))
+#     # return Row(userid=str(fields[0]), timestamp=lines.unix_timestamp(fields[1],'%Y-%m-%dT%H:%M:%SZ'))
 
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
-# Loading file...")
-lines = spark.sparkContext.textFile("userid-timestamp-artid-artname-traid-traname.tsv")
-playbacks = lines.map(mapper)
-# ... file loaded")
-# Infer the schema, and register the DataFrame as a table.
-schemaPlaybacks = spark.createDataFrame(playbacks) 
-# .cache() we don't need to cache this one
+# Loading file...
+# lines = spark.sparkContext.textFile("userid-timestamp-artid-artname-traid-traname.tsv")
+# playbacks = lines.map(mapper)
+
+# # Infer the schema, and register the DataFrame as a table.
+# schemaPlaybacks = spark.createDataFrame(playbacks)
+
+# Creating DataFrame differently
+schemaPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname.tsv",
+                                sep='\t',
+                                schema=StructType([
+                                        StructField("userid", StringType(), True), \
+                                        StructField("timestamp", TimestampType(), True), \
+                                        StructField("artid", StringType(), True), \
+                                        StructField("artname", StringType(), True), \
+                                        StructField("traid", StringType(), True), \
+                                        StructField("traname", StringType(), True)
+                                    ]))
 schemaPlaybacks.createOrReplaceTempView("playbacks")
 
 # Order playbacks so they are all consecutive by user and timestamp
@@ -60,7 +77,7 @@ orderedPlaybacks.createOrReplaceTempView("orderedPlaybacks")
 # Calculating beginning of each session
 ####
 calculatedSessions = spark.sql(""" 
-    SELECT *, count(*)
+    SELECT userid, timestamp, artname, traname, count(*)
         OVER (PARTITION BY userid
             ORDER BY timestamp 
             RANGE BETWEEN interval 20 minutes preceding AND current row)   
@@ -81,19 +98,10 @@ calculatedSessions = spark.sql("""
     """)
 
 calculatedSessions.createOrReplaceTempView("calculatedSessions")
+
 # Removing the one-song sessions
 calculatedSessionsFiltered = calculatedSessions.filter( ~ ((calculatedSessions.preceding_songs_count == 1) & (calculatedSessions.following_songs_count == 1)) )
 
-# Adding the session ID
-# songList = calculatedSessionsFiltered.withColumn('sessionid', lit(0)).collect()
-
-# Produce a list of 10 longest sessions by elapsed time with 
-# the following details for each session:
-#  - User
-#  - Time of the First Song been played
-#  - Time of the Last Song been played
-#  - List of songs played (sorted in the order of play)
-#
 # First set of calculations finished
 sessionid = 0
 songsBySession = {}
