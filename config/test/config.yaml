@@ -8,3 +8,5 @@ region: eu-west-1
 creator: ruben.sancho@cloudreach.com
 
 BKScripts: aws-glue-scripts-dstests-01
+BKLanding: lastfm-rsr-test
+BKRefined: lastfm-rsr-test-refined

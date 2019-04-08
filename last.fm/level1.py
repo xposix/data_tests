@@ -5,7 +5,7 @@
 from pyspark import SparkConf, SparkContext
 
 def parseLine(line):
-    ## Some of the entries don't have traid but all tracks have names although some of the names are just characters.
+    ## Some of the entries don't have traid but all tracks have names.
     fields = line.split('\t')
     userid = fields[0]
     newartname = fields[3] + fields[5]
@@ -15,20 +15,21 @@ def parseLine(line):
 conf = SparkConf().setMaster("local[*]").setAppName("level1")
 sc = SparkContext(conf = conf)
 
+# Opening and parsing the file into an RDD
 inputFile = sc.textFile("userid-timestamp-artid-artname-traid-traname.tsv")
 rdd = inputFile.map(parseLine)
 
-print("Before distinct: " + str(rdd.count()))
+# Removing duplicates, if any.
 simplified_rdd = rdd.distinct()
 
-print("After distinct: " + str(simplified_rdd.count()))
-
+# Calculating totals and sorting by user name
 totals = simplified_rdd.map(lambda x: (x[0], 1)).reduceByKey(lambda accumulated, current: accumulated + current)
 ordered_totals = totals.sortBy(lambda x: x[0])
 
-# print(ordered_totals.take(200))
+# Getting the results
 results = ordered_totals.collect()
 
+# Writing results into a file
 with open('output-level1.tsv', 'w') as f:
     for result in results:
         print(result)

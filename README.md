@@ -25,3 +25,20 @@ At the moment there are two separated source codes
 * /last.fm: PySpark scripts for the three exercises
 * /templates: Cloudformation template for the deployment of the ETL solution
 
+## Deployment of Cloudformation templates
+
+### Parameters handling
+
+These are the necessary parameters to deploy this project, they are in the `/config/test/config.yaml` file
+
+* project_code: name of the project and cloudformation stack
+* region: AWS region to deploy this project
+* creator: email address of the creator of the deployment (used for resource tagging)
+
+* BKScripts: S3 bucket that holds the Glue ETL scripts
+* BKLanding: S3 bucket that hold the folders with the raw data coming from Last FM. This bucket needs to be set up prior the deployment.
+* BKRefined: S3 bucket that holds the results once the Glue ETL process has finished.
+
+### Sceptre deployment
+
+The deployment process only needs Sceptre version 2.x. The actual deployment process is started with the `sceptre create test` command.
