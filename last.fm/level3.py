@@ -1,3 +1,4 @@
+# coding=UTF-8
 #############################################
 #  Level 3
 # Produce a list of 10 longest sessions by elapsed time with 
@@ -15,11 +16,11 @@
 #  
 
 from pyspark import SparkConf, SparkContext
-from pyspark.sql import SparkSession
-from pyspark.sql import Row
-from pyspark.sql import DataFrameReader
+from pyspark.sql import DataFrameReader , SparkSession, Row
 from pyspark.sql.types import StructField, TimestampType, StringType, StructType
-from pyspark.sql.functions import udf, lit
+from pyspark.sql import functions as func
+from pyspark.sql.window import Window
+
 import pprint
 import logging
 import sys 
@@ -38,7 +39,6 @@ spark = SparkSession.builder.appName("Level3").getOrCreate()
 def getTime(seconds):
     sec = datetime.timedelta(seconds=seconds)
     d = datetime.datetime(1,1,1) + sec
-
     return ("%dd %02dh %02dm %02ds" % (d.day-1, d.hour, d.minute, d.second))
 
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
@@ -54,33 +54,33 @@ schemaPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname-1
                                         StructField("traid", StringType(), True), \
                                         StructField("traname", StringType(), True)
                                     ]))
-schemaPlaybacks.createOrReplaceTempView("playbacks")
+# schemaPlaybacks.createOrReplaceTempView("playbacks")
 
 # Order playbacks so they are all consecutive by user and timestamp
-orderedPlaybacks = schemaPlaybacks.orderBy("userid","timestamp").dropDuplicates(["userid","timestamp"])
-orderedPlaybacks.createOrReplaceTempView("orderedPlaybacks")
+# orderedPlaybacks = schemaPlaybacks.orderBy("userid","timestamp").dropDuplicates(["userid","timestamp"])
+# orderedPlaybacks.createOrReplaceTempView("orderedPlaybacks")
 
-# Calculating beginning of each session
-calculatedSessions = spark.sql(""" 
-    SELECT userid, timestamp, artname, traname, count(*)
-        OVER (PARTITION BY userid
-            ORDER BY timestamp 
-            RANGE BETWEEN interval 20 minutes preceding AND current row)   
-        AS preceding_songs_count
-    FROM orderedPlaybacks
-    """)
-calculatedSessions.createOrReplaceTempView("calculatedSessions")
+playbacksWithPrevious = schemaPlaybacks.withColumn('previous_timestamp',
+                                                func.lag(schemaPlaybacks['timestamp'])
+                                                .over(Window.partitionBy('userid').orderBy("userid","timestamp")))
 
-# Calculating end of each session
-calculatedSessions = spark.sql(""" 
-    SELECT *, count(*)
-        OVER (PARTITION BY userid
-            ORDER BY timestamp 
-            RANGE BETWEEN current row AND interval 20 minutes following)   
-        AS following_songs_count
-    FROM calculatedSessions
-    """)
-calculatedSessions.createOrReplaceTempView("calculatedSessions")
+timeFmt = "yyyy-MM-dd'T'HH:mm:ssZ"
+timeDiff = (func.unix_timestamp('timestamp', format=timeFmt)
+            - func.unix_timestamp('previous_timestamp', format=timeFmt))
+result = playbacksWithPrevious.withColumn("timestamp_difference", timeDiff) 
+
+isNewSession = (func.when((result['timestamp_difference'] > 1200) | (func.isnull(result['timestamp_difference'])), 1).otherwise(0))
+result2 = result.withColumn("isNewSession", isNewSession)
+result2 = result2.drop('traid').drop('artid').drop('timestamp_difference').drop('previous_timestamp')
+
+
+result3 = result2.withColumn('sessionId',
+                                        func.sum(result2['isNewSession'])
+                                        .over(Window.partitionBy('userid').orderBy("userid","timestamp").rangeBetween(Window.unboundedPreceding, 0)))
+
+result3.show(1000)
+
+exit(-1)
 
 # Removing the one-song sessions
 calculatedSessionsFiltered = calculatedSessions.filter( ~ ((calculatedSessions.preceding_songs_count == 1) & (calculatedSessions.following_songs_count == 1)) )
