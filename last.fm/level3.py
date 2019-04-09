@@ -60,7 +60,7 @@ schemaPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname-1
 # orderedPlaybacks = schemaPlaybacks.orderBy("userid","timestamp").dropDuplicates(["userid","timestamp"])
 # orderedPlaybacks.createOrReplaceTempView("orderedPlaybacks")
 
-playbacksWithPrevious = schemaPlaybacks.withColumn('previous_timestamp',
+playbacksWithPrevious = schemaPlaybacks.drop('traid').drop('artid').withColumn('previous_timestamp',
                                                 func.lag(schemaPlaybacks['timestamp'])
                                                 .over(Window.partitionBy('userid').orderBy("userid","timestamp")))
 
@@ -71,15 +71,47 @@ result = playbacksWithPrevious.withColumn("timestamp_difference", timeDiff)
 
 isNewSession = (func.when((result['timestamp_difference'] > 1200) | (func.isnull(result['timestamp_difference'])), 1).otherwise(0))
 result2 = result.withColumn("isNewSession", isNewSession)
-result2 = result2.drop('traid').drop('artid').drop('timestamp_difference').drop('previous_timestamp')
 
-
+# The session counter will start on every new userid
 result3 = result2.withColumn('sessionId',
                                         func.sum(result2['isNewSession'])
                                         .over(Window.partitionBy('userid').orderBy("userid","timestamp").rangeBetween(Window.unboundedPreceding, 0)))
 
-result3.show(1000)
+result3 = result3.withColumn('sessionAcum',
+                                         func.sum(func.when(result3['isNewSession'] == 0, result3['timestamp_difference']).otherwise(0) )
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(Window.unboundedPreceding, 0)))
 
+result3 = result3.withColumn('sessionLength',
+                                        func.max(result3['sessionAcum'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+
+result3 = result3.drop('isNewSession').drop('previous_timestamp').drop('timestamp_difference')
+
+# Produce a list of 10 longest sessions by elapsed time with 
+# the following details for each session:
+#  - User
+#  - Time of the First Song been played
+#  - Time of the Last Song been played
+#  - List of songs played (sorted in the order of play)
+
+result3 = result3.withColumn('firstSongTimestamp',
+                                        func.min(result3['timestamp'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+
+result3 = result3.withColumn('lastSongTimestamp',
+                                        func.max(result3['timestamp'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+
+result3 = result3.withColumn('lastSongTimestamp',
+                                        func.max(result3['timestamp'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+
+result3.show(100)
+tenLongestSessions = result3.select(result3.userid, result3.sessionId, result3.sessionLength).orderBy(result3.sessionLength.desc()).limit(10)
+
+
+# result3.show(50000)
+# tenLongestSessions.show()
 exit(-1)
 
 # Removing the one-song sessions
