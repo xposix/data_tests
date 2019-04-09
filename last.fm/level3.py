@@ -102,9 +102,9 @@ result3 = result3.withColumn('lastSongTimestamp',
                                         func.max(result3['timestamp'])
                                         .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
-result3 = result3.withColumn('lastSongTimestamp',
-                                        func.max(result3['timestamp'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+# result3 = result3.withColumn('lastSongTimestamp',
+#                                         func.max(result3['timestamp'])
+#                                         .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
 result3.show(100)
 tenLongestSessions = result3.select(result3.userid, result3.sessionId, result3.sessionLength).orderBy(result3.sessionLength.desc()).limit(10)
