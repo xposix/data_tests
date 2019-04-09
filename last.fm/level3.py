@@ -15,18 +15,13 @@
 # including a README file describing the approach you use to solve the problem.
 #  
 
-from pyspark import SparkConf, SparkContext
-from pyspark.sql import DataFrameReader , SparkSession, Row
+from pyspark.sql import SparkSession, Row
 from pyspark.sql.types import StructField, TimestampType, StringType, StructType
 from pyspark.sql import functions as func
 from pyspark.sql.window import Window
 
-import pprint
 import logging
 import sys 
-import collections
-import datetime
-import time
 
 # Displaying UTF-8 by default
 import sys
@@ -36,15 +31,10 @@ sys.stdout = codecs.getwriter('utf8')(sys.stdout)
 # Create a SparkSession
 spark = SparkSession.builder.appName("Level3").getOrCreate()
 
-def getTime(seconds):
-    sec = datetime.timedelta(seconds=seconds)
-    d = datetime.datetime(1,1,1) + sec
-    return ("%dd %02dh %02dm %02ds" % (d.day-1, d.hour, d.minute, d.second))
-
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 
 # Creating DataFrame using a Reader
-schemaPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname-100k.tsv",
+originalPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname.tsv",
                                 sep='\t',
                                 schema=StructType([
                                         StructField("userid", StringType(), True), \
@@ -54,112 +44,65 @@ schemaPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname-1
                                         StructField("traid", StringType(), True), \
                                         StructField("traname", StringType(), True)
                                     ]))
-# schemaPlaybacks.createOrReplaceTempView("playbacks")
+### Starting the calculations ###
+# Dropping unused columns from the original 
+cleanOriginalPlaybacks = originalPlaybacks.drop('traid').drop('artid')
 
-# Order playbacks so they are all consecutive by user and timestamp
-# orderedPlaybacks = schemaPlaybacks.orderBy("userid","timestamp").dropDuplicates(["userid","timestamp"])
-# orderedPlaybacks.createOrReplaceTempView("orderedPlaybacks")
+# Bringing previous row's timestamp into a new column
+result = cleanOriginalPlaybacks.withColumn('previous_timestamp',
+                                            func.lag(originalPlaybacks['timestamp'])
+                                            .over(Window.partitionBy('userid').orderBy("timestamp")))
 
-playbacksWithPrevious = schemaPlaybacks.drop('traid').drop('artid').withColumn('previous_timestamp',
-                                                func.lag(schemaPlaybacks['timestamp'])
-                                                .over(Window.partitionBy('userid').orderBy("userid","timestamp")))
-
+# New column 'timestamp_difference' showing the timestamp differences
 timeFmt = "yyyy-MM-dd'T'HH:mm:ssZ"
 timeDiff = (func.unix_timestamp('timestamp', format=timeFmt)
             - func.unix_timestamp('previous_timestamp', format=timeFmt))
-result = playbacksWithPrevious.withColumn("timestamp_difference", timeDiff) 
+result = result.withColumn("timestamp_difference", timeDiff) 
 
+# New column 'isNewSession' showing 1 on every first song of a session, otherwise 0.
 isNewSession = (func.when((result['timestamp_difference'] > 1200) | (func.isnull(result['timestamp_difference'])), 1).otherwise(0))
-result2 = result.withColumn("isNewSession", isNewSession)
+result = result.withColumn("isNewSession", isNewSession)
 
-# The session counter will start on every new userid
-result3 = result2.withColumn('sessionId',
-                                        func.sum(result2['isNewSession'])
-                                        .over(Window.partitionBy('userid').orderBy("userid","timestamp").rangeBetween(Window.unboundedPreceding, 0)))
+# New column 'sessionId'. The session counter will start on every new userid.
+result = result.withColumn('sessionId',
+                                        func.sum(result['isNewSession'])
+                                        .over(Window.partitionBy('userid').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
+# Probar a quitar el userid
+result = result.withColumn('sessionAcum',
+                                        func.sum(func.when(result['isNewSession'] == 0, result['timestamp_difference']).otherwise(0) )
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
 
-result3 = result3.withColumn('sessionAcum',
-                                         func.sum(func.when(result3['isNewSession'] == 0, result3['timestamp_difference']).otherwise(0) )
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(Window.unboundedPreceding, 0)))
+result = result.withColumn('sessionLength',
+                                        func.max(result['sessionAcum'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
-result3 = result3.withColumn('sessionLength',
-                                        func.max(result3['sessionAcum'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+# Removing unnecessary columns 
+result = result.drop('isNewSession').drop('previous_timestamp').drop('timestamp_difference')
 
-result3 = result3.drop('isNewSession').drop('previous_timestamp').drop('timestamp_difference')
+# Saving each session's first song's timestamp on a new column
+result = result.withColumn('firstSongTimestamp',
+                                        func.min(result['timestamp'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
 
-# Produce a list of 10 longest sessions by elapsed time with 
-# the following details for each session:
-#  - User
-#  - Time of the First Song been played
-#  - Time of the Last Song been played
-#  - List of songs played (sorted in the order of play)
+# Saving each session's last song's timestamp on a new column
+result = result.withColumn('lastSongTimestamp',
+                                        func.max(result['timestamp'])
+                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
-result3 = result3.withColumn('firstSongTimestamp',
-                                        func.min(result3['timestamp'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+# Filtering the last song of the sessions as a representative of the session to use it for the top 10 longest sessions ranking
+tenLongestSessions = result.filter(result['sessionLength'] == result['sessionAcum'])
+tenLongestSessions = tenLongestSessions.select(result.userid, result.sessionId, result.sessionLength).orderBy(result.sessionLength.desc()).limit(10)
 
-result3 = result3.withColumn('lastSongTimestamp',
-                                        func.max(result3['timestamp'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
+# Finding the songs related to those 10 sessions on the songs list. Adding some aliases to avoid warnings.
+longestSessions = tenLongestSessions.alias('longestSessions')
+songsList = result.alias('songsList')
+finalResult = result.join(tenLongestSessions, ((songsList.userid == longestSessions.userid) & (songsList.sessionId == longestSessions.sessionId))
+              ).select(result.userid, result.timestamp, result.artname, result.traname, result.sessionLength, 
+              result.sessionId, result.firstSongTimestamp, result.lastSongTimestamp)
+finalResult = finalResult.orderBy(result.sessionLength.desc(), result.userid, result.timestamp)
 
-# result3 = result3.withColumn('lastSongTimestamp',
-#                                         func.max(result3['timestamp'])
-#                                         .over(Window.partitionBy('userid','sessionId').orderBy("userid","timestamp").rangeBetween(0, Window.unboundedFollowing)))
-
-result3.show(100)
-tenLongestSessions = result3.select(result3.userid, result3.sessionId, result3.sessionLength).orderBy(result3.sessionLength.desc()).limit(10)
-
-
-# result3.show(50000)
-# tenLongestSessions.show()
-exit(-1)
-
-# Removing the one-song sessions
-calculatedSessionsFiltered = calculatedSessions.filter( ~ ((calculatedSessions.preceding_songs_count == 1) & (calculatedSessions.following_songs_count == 1)) )
-
-# First set of calculations finished
-sessionid = 0
-songsBySession = {}
-logging.info("Calculating sessions")
-songs = calculatedSessionsFiltered.collect()
-
-# Moving results to a dictionary to perform operations
-logging.info("Calculating processing in dict")
-for song in songs:
-    if song.preceding_songs_count == 1:
-        # Start of the session
-        sessionid += 1
-        first_timestamp = song.timestamp
-        songsBySession[sessionid] = {}
-        songsBySession[sessionid]['songs'] = []
-    elif song.following_songs_count == 1:
-        # End of the session
-        songsBySession[sessionid]['first_timestamp'] = first_timestamp
-        songsBySession[sessionid]['last_timestamp']  = song.timestamp
-        songsBySession[sessionid]['userid'] = song.userid
-    
-    songsBySession[sessionid]['songs'].append({'timestamp': song.timestamp.isoformat(), 'artname': song.artname, 'traname': song.traname})
-
-logging.info("Creating RDD")
-final_rdd = spark.sparkContext.parallelize(songsBySession.items())
-
-# Calculating durations
-final_rdd_with_durations = final_rdd.map(lambda x: (x, (x[1]['last_timestamp'] - x[1]['first_timestamp']).total_seconds()))
-
-# Sorting and extracting the top 10
-final_rdd_with_durations_sorted = final_rdd_with_durations.sortBy(lambda x: x[1], ascending=False).take(10)
-
-logging.info("Writting into disk...")
-with open('output-level3.txt', 'w') as f:
-    for session in final_rdd_with_durations_sorted:
-        f.write("======= Session: " + str(session[0][0]) + " ========\n")
-        f.write(" User: \t"  + str(session[0][1]['userid'] + "\n"))
-        f.write(" Duration (s): \t"  + getTime(session[1]) + "\n")
-        f.write(' Time of the first song: ' + str(session[0][1]['first_timestamp'])+ "\n")
-        f.write(' Time of the last song:  ' + str(session[0][1]['last_timestamp'])+ "\n")
-        f.write(" List of songs:\n")
-        for song in session[0][1]['songs']:
-            f.write("\t {0}\t{1} => {2}\n".format(song['timestamp'], song['artname'].encode('utf-8'), song['traname'].encode('utf-8')))
+# Save results to disk
+finalResult.coalesce(1).write.csv('output-level3', mode='overwrite', sep='\t', header=True)
 
 spark.stop()
 
