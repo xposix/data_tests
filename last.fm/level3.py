@@ -46,7 +46,7 @@ originalPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname
                                     ]))
 ### Starting the calculations ###
 # Dropping unused columns from the original 
-cleanOriginalPlaybacks = originalPlaybacks.drop('traid').drop('artid')
+cleanOriginalPlaybacks = originalPlaybacks.drop('traid', 'artid')
 
 # Bringing previous row's timestamp into a new column
 result = cleanOriginalPlaybacks.withColumn('previous_timestamp',
@@ -77,7 +77,7 @@ result = result.withColumn('sessionLength',
                                         .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
 # Removing unnecessary columns 
-result = result.drop('isNewSession').drop('previous_timestamp').drop('timestamp_difference')
+result = result.drop('isNewSession', 'previous_timestamp', 'timestamp_difference', 'artname', 'traname')
 
 # Saving each session's first song's timestamp on a new column
 result = result.withColumn('firstSongTimestamp',
