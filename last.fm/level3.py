@@ -15,6 +15,8 @@
 # including a README file describing the approach you use to solve the problem.
 #  
 
+# Expected output: list of the 10 sessions with the songs all concatenated into a single column.
+
 from pyspark.sql import SparkSession, Row
 from pyspark.sql.types import StructField, TimestampType, StringType, StructType
 from pyspark.sql import functions as func
@@ -76,6 +78,8 @@ result = result.withColumn('sessionLength',
                                         func.max(result['sessionAcum'])
                                         .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
 
+result = result.withColumn('artistSongNames', func.concat_ws(' - ', result.artname,result.traname))
+
 # Removing unnecessary columns 
 result = result.drop('isNewSession', 'previous_timestamp', 'timestamp_difference', 'artname', 'traname')
 
@@ -97,9 +101,14 @@ tenLongestSessions = tenLongestSessions.select(result.userid, result.sessionId, 
 longestSessions = tenLongestSessions.alias('longestSessions')
 songsList = result.alias('songsList')
 finalResult = result.join(tenLongestSessions, ((songsList.userid == longestSessions.userid) & (songsList.sessionId == longestSessions.sessionId))
-              ).select(result.userid, result.timestamp, result.artname, result.traname, result.sessionLength, 
+              ).select(result.userid, result.timestamp, result.artistSongNames, result.sessionLength,
               result.sessionId, result.firstSongTimestamp, result.lastSongTimestamp)
 finalResult = finalResult.orderBy(result.sessionLength.desc(), result.userid, result.timestamp)
+
+# User, Session ID, firstSongTimestamp, lastSongTimestamp
+finalResult = finalResult.groupBy('userid','sessionId','firstSongTimestamp','lastSongTimestamp','sessionLength').agg(
+                func.concat_ws(", ", func.collect_list(result.artistSongNames)).alias('Songs')
+                ).orderBy(result.sessionLength.desc())
 
 # Save results to disk
 finalResult.coalesce(1).write.csv('output-level3', mode='overwrite', sep='\t', header=True)
