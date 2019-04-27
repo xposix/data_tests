@@ -47,10 +47,13 @@ originalPlaybacks = spark.read.csv("userid-timestamp-artid-artname-traid-traname
                                         StructField("traname", StringType(), True)
                                     ]))
 ### Starting the calculations ###
-# Dropping unused columns from the original 
-cleanOriginalPlaybacks = originalPlaybacks.drop('traid', 'artid')
+originalPlaybacks = originalPlaybacks.withColumn('artistSongNames', func.concat_ws(' - ', originalPlaybacks.artname,originalPlaybacks.traname))
 
-# Bringing previous row's timestamp into a new column
+# Dropping unused columns from the original 
+cleanOriginalPlaybacks = originalPlaybacks.drop('traid', 'artid', 'artname', 'traname')
+
+
+# Bringing previous row's timestamp into a new column in the current row
 result = cleanOriginalPlaybacks.withColumn('previous_timestamp',
                                             func.lag(originalPlaybacks['timestamp'])
                                             .over(Window.partitionBy('userid').orderBy("timestamp")))
@@ -69,46 +72,20 @@ result = result.withColumn("isNewSession", isNewSession)
 result = result.withColumn('sessionId',
                                         func.sum(result['isNewSession'])
                                         .over(Window.partitionBy('userid').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
-# Probar a quitar el userid
+
 result = result.withColumn('sessionAcum',
                                         func.sum(func.when(result['isNewSession'] == 0, result['timestamp_difference']).otherwise(0) )
                                         .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
 
-result = result.withColumn('sessionLength',
-                                        func.max(result['sessionAcum'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
-
-result = result.withColumn('artistSongNames', func.concat_ws(' - ', result.artname,result.traname))
-
 # Removing unnecessary columns 
-result = result.drop('isNewSession', 'previous_timestamp', 'timestamp_difference', 'artname', 'traname')
+result = result.drop('isNewSession', 'previous_timestamp')
 
-# Saving each session's first song's timestamp on a new column
-result = result.withColumn('firstSongTimestamp',
-                                        func.min(result['timestamp'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(Window.unboundedPreceding, 0)))
-
-# Saving each session's last song's timestamp on a new column
-result = result.withColumn('lastSongTimestamp',
-                                        func.max(result['timestamp'])
-                                        .over(Window.partitionBy('userid','sessionId').orderBy("timestamp").rangeBetween(0, Window.unboundedFollowing)))
-
-# Filtering the last song of the sessions as a representative of the session to use it for the top 10 longest sessions ranking
-tenLongestSessions = result.filter(result['sessionLength'] == result['sessionAcum'])
-tenLongestSessions = tenLongestSessions.select(result.userid, result.sessionId, result.sessionLength).orderBy(result.sessionLength.desc()).limit(10)
-
-# Finding the songs related to those 10 sessions on the songs list. Adding some aliases to avoid warnings.
-longestSessions = tenLongestSessions.alias('longestSessions')
-songsList = result.alias('songsList')
-finalResult = result.join(tenLongestSessions, ((songsList.userid == longestSessions.userid) & (songsList.sessionId == longestSessions.sessionId))
-              ).select(result.userid, result.timestamp, result.artistSongNames, result.sessionLength,
-              result.sessionId, result.firstSongTimestamp, result.lastSongTimestamp)
-finalResult = finalResult.orderBy(result.sessionLength.desc(), result.userid, result.timestamp)
-
-# User, Session ID, firstSongTimestamp, lastSongTimestamp
-finalResult = finalResult.groupBy('userid','sessionId','firstSongTimestamp','lastSongTimestamp','sessionLength').agg(
-                func.concat_ws(", ", func.collect_list(result.artistSongNames)).alias('Songs')
-                ).orderBy(result.sessionLength.desc())
+finalResult = result.orderBy('userid','sessionId','timestamp').groupBy('userid','sessionId').agg(
+                func.min(result.timestamp).alias('firstSongTimestamp'),
+                func.max(result.timestamp).alias('lastSongTimestamp'),
+                func.max(result.sessionAcum).alias('sessionLength'),
+                func.concat_ws(", ", func.collect_list(result.artistSongNames)).alias('SongsList')
+                ).orderBy('sessionLength', ascending=False).limit(10)
 
 # Save results to disk
 finalResult.coalesce(1).write.csv('output-level3', mode='overwrite', sep='\t', header=True)
