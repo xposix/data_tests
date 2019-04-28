@@ -17,7 +17,7 @@ including a README file describing the approach you use to solve the problem.
 
 ## Approach taken
 
-This exercise uses DataFrames to help with the amount of data to process. Only one of both files is used `userid-timestamp-artid-artname-traid-traname.tsv`. 
+This exercise uses DataFrames to help with the amount of data to process. Only one of both files is used `userid-timestamp-artid-artname-traid-traname.tsv`.
 
 Please refer to the comments in the source code for more low-level detail. These are roughly the steps followed by the code.
 
@@ -32,4 +32,4 @@ Please refer to the comments in the source code for more low-level detail. These
 9. Go back to the original DataFrame from step 6 and filter by session id/user id to get the list of the songs.
 10. Write changes to disk.
 
-The process takes around 5.30 min to run and the final result sits on the `output-level3` folder and it was renamed to `result.tsv`
+The process takes around 2.40 min to run and the final result sits on the `output-level3` folder and it was renamed to `result.tsv`

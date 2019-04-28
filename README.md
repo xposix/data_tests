@@ -5,7 +5,7 @@ Unfortunately, I ran out of time so I could not finish my original idea, which w
 
 ## Status of the code
 
-At the moment there are two separated source codes
+At the moment, there are two separated source codes that due to lack of time, they don't work together.
 
 * IaC solution using Cloudformation and Sceptre that works by itself what deploys the following:
   * Necessary IAM roles
@@ -16,7 +16,7 @@ At the moment there are two separated source codes
 * PySpark scripts. Lack of time stopped me from moving the two first exercises to Dataframes. I consider them more efficient for that purpose.
   * Level1: working solution based on RDDs.
   * Level2: working solution based on RDDs.
-  * Level3: it works for smaller files but it runs out of memory when trying to handle the original 2.4 GB file.
+  * Level3: working solution based on Dataframes.
 
 ## Content of the repo
 
